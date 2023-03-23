@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "variante.h"
 #include "readcmd.h"
@@ -78,6 +79,15 @@ int main() {
 		   can not be cleaned at the end of the program. Thus
 		   one memory leak per command seems unavoidable yet */
 		line = readline(prompt);
+
+//		int pid = fork();
+//		if (pid == 0){
+//			execve(line, NULL, NULL)
+//		}
+
+
+
+
 		if (line == 0 || ! strncmp(line,"exit", 4)) {
 			terminate(line);
 		}
@@ -122,12 +132,19 @@ int main() {
 		/* Display each command of the pipe */
 		for (i=0; l->seq[i]!=0; i++) {
 			char **cmd = l->seq[i];
-			printf("seq[%d]: ", i);
-                        for (j=0; cmd[j]!=0; j++) {
-                                printf("'%s' ", cmd[j]);
+                        int pid = fork();
+                        if (pid == -1){
+                                printf("fork() has resulted in an error\n");
                         }
-			printf("\n");
+                        else if (pid == 0){
+                                //We are in the child process
+                                execve(cmd[0], cmd, NULL);
+                        }
+                        else {
+                                printf("father process\n");
+                        }
 		}
+
 	}
 
 }
