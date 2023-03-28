@@ -109,7 +109,7 @@ int main() {
   scm_c_define_gsubr("executer", 1, 0, 0, executer_wrapper);
 #endif
 
-  
+
 
   //Associate the SIGCHLD signal with the removing function
   signal(SIGCHLD, remove_child);
@@ -117,7 +117,7 @@ int main() {
   while (1) {
     struct cmdline *l;
     char *line = 0;
-    int i;
+    //int i;
     char *prompt = "ensishell>";
 
     /* Readline use some internal memory structure that
@@ -175,49 +175,39 @@ int main() {
       continue;
     }
 
-    if (l->in)
-      printf("in: %s\n", l->in);
-    if (l->out)
-      printf("out: %s\n", l->out);
-    if (l->bg)
-      printf("background (&)\n");
+    if (l->in){printf("in: %s\n", l->in);}
+    if (l->out){printf("out: %s\n", l->out);}
+    if (l->bg){printf("background (&)\n");}
 
-
-
-    /* Display each command of the pipe */
-    for (i = 0; l->seq[i] != 0; i++) {
-      char **cmd = l->seq[i];
-      int pid = fork();
-      if (pid == -1) {
+    //for (i = 0; l->seq[i] != 0; i++) {
+    char **cmd = l->seq[0];
+    int pipes_count = 0;
+    int pid = fork();
+    if (pid == -1) {
         printf("fork() has resulted in an error\n");
-      }
-      //Child
-      else if (pid == 0) {
-        //execute task
-
+    }
+    //Child
+    else if (pid == 0) {
         //Create a pipe if needed
-        if (l->seq[1]) {
+        while (l -> seq[pipes_count + 1]) {
                 int pipe_fd[2]; //pipe_fd[0]:read canal, pipe_fd[1]:write canal
                 pipe(pipe_fd);
                 int res_fork_pipe = fork();
                 if (res_fork_pipe == 0){
-                        printf("%d\n", i);
-                        printf("grep\n");
                         dup2(pipe_fd[0], 0); //associating stdin to read channel
                         close(pipe_fd[1]);
                         close(pipe_fd[0]);
-                        execvp(l->seq[1][0], l->seq[1]);
+                        execvp(l->seq[pipes_count + 1][0], l->seq[pipes_count + 1]);
                         exit(0);
                 }
-                printf("ls\n");
                 dup2(pipe_fd[1], 1);//associating stdout to write canal
                 close(pipe_fd[0]);
                 close(pipe_fd[1]);
-                execvp(l->seq[0][0], l->seq[0]);
+                pipes_count ++;
+                execvp(l->seq[pipes_count-1][0], l->seq[pipes_count-1]);
                 exit(0);
         }
-        else {
-
+        if (pipes_count == 0) {
                 execvp(cmd[0], cmd);
                 exit(0);
         }
@@ -252,4 +242,3 @@ int main() {
 
     }
   }
-}
