@@ -182,26 +182,55 @@ int main() {
     if (l->bg)
       printf("background (&)\n");
 
+
+
     /* Display each command of the pipe */
     for (i = 0; l->seq[i] != 0; i++) {
       char **cmd = l->seq[i];
       int pid = fork();
       if (pid == -1) {
         printf("fork() has resulted in an error\n");
-      } 
+      }
+      //Child
       else if (pid == 0) {
         //execute task
-        execvp(cmd[0], cmd);
-        exit(0);
+
+        //Create a pipe if needed
+        if (l->seq[1]) {
+                int pipe_fd[2]; //pipe_fd[0]:read canal, pipe_fd[1]:write canal
+                pipe(pipe_fd);
+                int res_fork_pipe = fork();
+                if (res_fork_pipe == 0){
+                        printf("%d\n", i);
+                        printf("grep\n");
+                        dup2(pipe_fd[0], 0); //associating stdin to read channel
+                        close(pipe_fd[1]);
+                        close(pipe_fd[0]);
+                        execvp(l->seq[1][0], l->seq[1]);
+                        exit(0);
+                }
+                printf("ls\n");
+                dup2(pipe_fd[1], 1);//associating stdout to write canal
+                close(pipe_fd[0]);
+                close(pipe_fd[1]);
+                execvp(l->seq[0][0], l->seq[0]);
+                exit(0);
+        }
+        else {
+
+                execvp(cmd[0], cmd);
+                exit(0);
+        }
       }
 
+      //Parent
       else {
         // The parent process waits for the execution of the child
         if (!l->bg) {
           int status;
           wait(&status);
         }
-
+        // The parent doesn't wait for the execution
         else {
           printf("The child is to be ran in the backgrounds\n");
           //Add process to background processes
@@ -217,6 +246,7 @@ int main() {
             bg_process -> next = process_list;
             process_list  = bg_process;
           }
+
         }
       }
 
