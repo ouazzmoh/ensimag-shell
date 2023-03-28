@@ -28,6 +28,21 @@
 #if USE_GUILE == 1
 #include <libguile.h>
 
+
+struct process_node *process_list = NULL;
+
+struct process_node {
+  pid_t pid;
+  char* cmd_name;
+  struct process_node * next;
+};
+
+
+
+
+
+
+
 int question6_executer(char *line) {
   /* Question 6: Insert your code to execute the command line
    * identically to the standard execution scheme:
@@ -57,8 +72,36 @@ void terminate(char *line) {
   exit(0);
 }
 
+
+void remove_child(int sig) {
+    //Handler to be associated with the SIGCHLD process
+    pid_t pid;
+    int status;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+      struct process_node *currentNode = process_list;
+      struct process_node *prevNode = NULL;
+      while (currentNode != NULL) {
+          if (currentNode->pid == pid) {
+              if (prevNode == NULL) {
+                  process_list = currentNode -> next;
+              } else {
+                  prevNode->next = currentNode->next;
+              }
+              free(currentNode->cmd_name);
+              free(currentNode);
+              break;
+          }
+          prevNode = currentNode;
+          currentNode = currentNode->next;
+      }
+    }
+}
+
+
 int main() {
   printf("Variante %d: %s\n", VARIANTE, VARIANTE_STRING);
+
+
 
 #if USE_GUILE == 1
   scm_init_guile();
@@ -66,7 +109,10 @@ int main() {
   scm_c_define_gsubr("executer", 1, 0, 0, executer_wrapper);
 #endif
 
-  pid_t bg_tasks = 0;
+  
+
+  //Associate the SIGCHLD signal with the removing function
+  signal(SIGCHLD, remove_child);
 
   while (1) {
     struct cmdline *l;
@@ -89,7 +135,12 @@ int main() {
     }
 
     else if (!strncmp(line, "jobs", 4)) {
-      printf("%d\n", bg_tasks);
+      struct process_node *currentNode = process_list;
+
+      while (currentNode != NULL) {
+          printf("the task's pid:%d; and name : %s\n", currentNode->pid, currentNode->cmd_name);
+          currentNode = currentNode->next;
+      }
     }
 
 #if USE_GNU_READLINE == 1
@@ -137,13 +188,14 @@ int main() {
       int pid = fork();
       if (pid == -1) {
         printf("fork() has resulted in an error\n");
-      } else if (pid == 0) {
-        // Add to background task
-        execve(cmd[0], cmd, NULL);
+      } 
+      else if (pid == 0) {
+        //execute task
+        execvp(cmd[0], cmd);
         exit(0);
-        }
+      }
 
-      } else {
+      else {
         // The parent process waits for the execution of the child
         if (!l->bg) {
           int status;
@@ -152,10 +204,22 @@ int main() {
 
         else {
           printf("The child is to be ran in the backgrounds\n");
-          pid_t wait_result = waitpid(-1, NULL, WNOHANG);
+          //Add process to background processes
+          struct process_node *bg_process = (struct process_node *)malloc(sizeof( struct process_node));
+          bg_process -> pid = pid;
+          bg_process -> cmd_name = strdup(cmd[0]);
 
+          if (process_list == NULL){
+            process_list = bg_process;
+            process_list -> next = NULL;
+          }
+          else{
+            bg_process -> next = process_list;
+            process_list  = bg_process;
+          }
         }
       }
+
     }
   }
 }
