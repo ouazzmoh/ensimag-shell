@@ -38,30 +38,6 @@ struct process_node {
   struct process_node * next;
 };
 
-
-
-
-
-
-
-int question6_executer(char *line) {
-  /* Question 6: Insert your code to execute the command line
-   * identically to the standard execution scheme:
-   * parsecmd, then fork+execvp, for a single command.
-   * pipe and i/o redirection are not required.
-   */
-  printf("Not implemented yet: can not execute %s\n", line);
-
-  /* Remove this line when using parsecmd as it will free it */
-  free(line);
-  return 0;
-}
-
-SCM executer_wrapper(SCM x) {
-  return scm_from_int(question6_executer(scm_to_locale_stringn(x, 0)));
-}
-#endif
-
 void terminate(char *line) {
 #if USE_GNU_READLINE == 1
   /* rl_clear_history() does not exist yet in centOS 6 */
@@ -73,8 +49,154 @@ void terminate(char *line) {
   exit(0);
 }
 
+void exec_cmd(struct cmdline *l){
+    /* If input stream closed, normal termination */
+  if (!l) {
+    terminate(0);
+  }
 
-void remove_child(int sig) {
+  if (l->err) {
+    /* Syntax error, read another command */
+    printf("error: %s\n", l->err);
+    // continue;
+  }
+
+  if (l->in){printf("in: %s\n", l->in);}
+  if (l->out){printf("out: %s\n", l->out);}
+  if (l->bg){printf("background (&)\n");}
+
+
+  //Number of the commands
+  int num_cmd = 0;
+  for (num_cmd = 0; l->seq[num_cmd]; num_cmd++){}//Calculate the lenght of commands
+  //Creating pipes
+  int pipe_fd[num_cmd - 1][2]; 
+  if (num_cmd > 1){
+    for (int k = 0; k < num_cmd-1; k++){
+      if(pipe(pipe_fd[k]) < 0){
+        exit(1); //Failure happened when creating the pipes
+      }
+    }
+  }
+
+  //Looping through the commands, forking, piping, executing
+  for (int i = 0; i < num_cmd; i++) {
+    char **cmd = l->seq[i];
+    int pid = fork();
+    if (pid == -1) {
+        perror("fork() has resulted in an error\n");
+    }
+    //Child
+    else if (pid == 0) {
+      // Check for input redirection
+      if (l->in) {
+        int in_fd = open(l->in, O_RDONLY);
+        if (in_fd == -1) {
+          perror("Problem opening file descriptor\n");
+          exit(1);
+        }
+        dup2(in_fd, 0);
+        close(in_fd);
+      }
+      // Check for output redirection
+      if (l->out) {
+        int out_fd = open(l->out, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+        if (out_fd == -1) {
+          perror("Problem opening file descriptor\n");
+          exit(1);
+        }
+        dup2(out_fd, 1);
+        close(out_fd);
+      }
+      if (i > 0){
+        //Use of pipes
+        dup2(pipe_fd[i-1][0], 0); //associating stdin to read channel
+        close(pipe_fd[i-1][1]);
+        close(pipe_fd[i-1][0]);
+      }
+      if (i < num_cmd-1){
+        dup2(pipe_fd[i][1], 1);//associating stdout to write canal
+        close(pipe_fd[i][0]);
+        close(pipe_fd[i][1]);
+      }
+      //Execute command
+      execvp(cmd[0], cmd);
+      exit(1);
+    }
+    //Parent
+    else {
+      if (i > 0){
+        close(pipe_fd[i-1][0]);
+        close(pipe_fd[i-1][1]);
+      }
+      // The parent process waits for the execution of the child
+      if (!l->bg) {
+        int status;
+        waitpid(pid, &status, 0);
+      }
+      // The parent doesn't wait for the execution
+      else {
+        printf("The child is to be ran in the backgrounds\n");
+          
+          //Add process to background processes
+          struct process_node *bg_process = (struct process_node *)malloc(sizeof( struct process_node));
+          bg_process -> pid = pid;
+          bg_process -> cmd_name = strdup(cmd[0]);
+
+          if (process_list == NULL){
+            process_list = bg_process;
+            process_list -> next = NULL;
+          }
+          else{
+            bg_process -> next = process_list;
+            process_list  = bg_process;
+          }
+        }
+      }
+    }
+}
+
+
+
+int question6_executer(char *line) {
+  /* Question 6: Insert your code to execute the command line
+   * identically to the standard execution scheme:
+   * parsecmd, then fork+execvp, for a single command.
+   * pipe and i/o redirection are not required.
+   */
+  
+  if (line == 0 || !strncmp(line, "exit", 4)) {
+      terminate(line);
+    }
+
+    else if (!strncmp(line, "jobs", 4)) {
+      struct process_node *currentNode = process_list;
+
+      while (currentNode != NULL) {
+          printf("the task's pid:%d; and name : %s\n", currentNode->pid, currentNode->cmd_name);
+          currentNode = currentNode->next;
+      }
+    }
+
+  struct cmdline *l = parsecmd(&line);
+  exec_cmd(l);
+  if (line){
+    free(line);
+  }
+  return 0;
+}
+
+
+
+SCM executer_wrapper(SCM x) {
+  return scm_from_int(question6_executer(scm_to_locale_stringn(x, 0)));
+}
+#endif
+
+
+
+
+void remove_child() {
     //Handler to be associated with the SIGCHLD process: removes the process from the list and prints int
     //Variante: Terminaison asynchrone
     pid_t pid;
@@ -91,7 +213,7 @@ void remove_child(int sig) {
                   prevNode->next = currentNode->next;
               }
 
-              printf("The process with pid %d and command name %s\n has terminated", currentNode->pid, currentNode->cmd_name);
+              printf("The process with pid %d and command name %s\n has terminated\n", currentNode->pid, currentNode->cmd_name);
 
               free(currentNode->cmd_name);
               free(currentNode);
@@ -102,6 +224,10 @@ void remove_child(int sig) {
       }
     }
 }
+
+
+
+
 
 
 int main() {
@@ -123,7 +249,6 @@ int main() {
   while (1) {
     struct cmdline *l;
     char *line = 0;
-    int i;
     char *prompt = "ensishell>";
 
     /* Readline use some internal memory structure that
@@ -169,116 +294,6 @@ int main() {
 
     /* parsecmd free line and set it up to 0 */
     l = parsecmd(&line);
-
-    /* If input stream closed, normal termination */
-    if (!l) {
-      terminate(0);
-    }
-
-    if (l->err) {
-      /* Syntax error, read another command */
-      printf("error: %s\n", l->err);
-      continue;
-    }
-
-    if (l->in){printf("in: %s\n", l->in);}
-    if (l->out){printf("out: %s\n", l->out);}
-    if (l->bg){printf("background (&)\n");}
-
-
-    //Number of the commands
-    int num_cmd = 0;
-    for (num_cmd = 0; l->seq[num_cmd]; num_cmd++){}
-    //Creating pipes
-    int pipe_fd[num_cmd - 1][2]; 
-    if (num_cmd > 1){
-      for (int k = 0; k < num_cmd-1; k++){
-        if(pipe(pipe_fd[k]) < 0){
-          exit(1); //Failure happened when creating the pipes
-        }
-      }
-    }
-
-    //Looping through the commands, forking, piping, executing
-    for (i = 0; i < num_cmd; i += 2) {
-      char **cmd_left = l->seq[i];
-      char **cmd_right = l->seq[i+1];
-      int pid = fork();
-      if (pid == -1) {
-          printf("fork() has resulted in an error\n");
-      }
-      //Child
-      else if (pid == 0) {
-        // Check for input redirection
-        if (l->in) {
-          int in_fd = open(l->in, O_RDONLY);
-          if (in_fd == -1) {
-            printf("Problem opening file descriptor");
-            exit(1);
-          }
-          dup2(in_fd, 0);
-          close(in_fd);
-        }
-        // Check for output redirection
-        if (l->out) {
-          int out_fd = open(l->out, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
-          if (out_fd == -1) {
-            printf("Problem opening file descriptor");
-            exit(1);
-          }
-          dup2(out_fd, 1);
-          close(out_fd);
-        }
-        if (num_cmd > 1){
-          //Use of pipes
-          if (fork() == 0){
-            //child
-            dup2(pipe_fd[i][0], 0); //associating stdin to read channel
-            close(pipe_fd[i][1]);
-            close(pipe_fd[i][0]);
-            execvp(cmd_right[0], cmd_right);
-            exit(1);
-          }
-          dup2(pipe_fd[i][1], 1);//associating stdout to write canal
-          close(pipe_fd[i][0]);
-          close(pipe_fd[i][1]);
-          execvp(cmd_left[0], cmd_left);
-          exit(1);
-        }
-        
-        else {
-          //No pipes
-          execvp(cmd_left[0], cmd_left);
-          exit(1);
-        }
-
-        }
-        //Parent
-        else {
-          // The parent process waits for the execution of the child
-          if (!l->bg) {
-            int status;
-            wait(&status);
-          }
-          // The parent doesn't wait for the execution
-          else {
-            printf("The child is to be ran in the backgrounds\n");
-            
-            //Add process to background processes
-            struct process_node *bg_process = (struct process_node *)malloc(sizeof( struct process_node));
-            bg_process -> pid = pid;
-            bg_process -> cmd_name = strdup(cmd_left[0]);
-
-            if (process_list == NULL){
-              process_list = bg_process;
-              process_list -> next = NULL;
-            }
-            else{
-              bg_process -> next = process_list;
-              process_list  = bg_process;
-            }
-          }
-        }
-      }
+    exec_cmd(l);
   }
 }
