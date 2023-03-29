@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include "readcmd.h"
 #include "variante.h"
@@ -117,7 +118,7 @@ int main() {
   while (1) {
     struct cmdline *l;
     char *line = 0;
-    //int i;
+    int i;
     char *prompt = "ensishell>";
 
     /* Readline use some internal memory structure that
@@ -179,66 +180,100 @@ int main() {
     if (l->out){printf("out: %s\n", l->out);}
     if (l->bg){printf("background (&)\n");}
 
-    //for (i = 0; l->seq[i] != 0; i++) {
-    char **cmd = l->seq[0];
-    int pipes_count = 0;
-    int pid = fork();
-    if (pid == -1) {
-        printf("fork() has resulted in an error\n");
-    }
-    //Child
-    else if (pid == 0) {
-        //Create a pipe if needed
-        while (l -> seq[pipes_count + 1]) {
-                int pipe_fd[2]; //pipe_fd[0]:read canal, pipe_fd[1]:write canal
-                pipe(pipe_fd);
-                int res_fork_pipe = fork();
-                if (res_fork_pipe == 0){
-                        dup2(pipe_fd[0], 0); //associating stdin to read channel
-                        close(pipe_fd[1]);
-                        close(pipe_fd[0]);
-                        execvp(l->seq[pipes_count + 1][0], l->seq[pipes_count + 1]);
-                        exit(0);
-                }
-                dup2(pipe_fd[1], 1);//associating stdout to write canal
-                close(pipe_fd[0]);
-                close(pipe_fd[1]);
-                pipes_count ++;
-                execvp(l->seq[pipes_count-1][0], l->seq[pipes_count-1]);
-                exit(0);
-        }
-        if (pipes_count == 0) {
-                execvp(cmd[0], cmd);
-                exit(0);
+
+    //Number of the commands
+    int num_cmd = 0;
+    for (num_cmd = 0; l->seq[num_cmd]; num_cmd++){}
+    //Creating pipes
+    int pipe_fd[num_cmd - 1][2]; 
+    if (num_cmd > 1){
+      for (int k = 0; k < num_cmd-1; k++){
+        if(pipe(pipe_fd[k]) < 0){
+          exit(1); //Failure happened when creating the pipes
         }
       }
+    }
 
-      //Parent
-      else {
-        // The parent process waits for the execution of the child
-        if (!l->bg) {
-          int status;
-          wait(&status);
+    //Looping through the commands, forking, piping, executing
+    for (i = 0; i < num_cmd; i += 2) {
+      char **cmd_left = l->seq[i];
+      char **cmd_right = l->seq[i+1];
+      int pid = fork();
+      if (pid == -1) {
+          printf("fork() has resulted in an error\n");
+      }
+      //Child
+      else if (pid == 0) {
+        // Check for input redirection
+        if (l->in) {
+          int in_fd = open(l->in, O_RDONLY);
+          if (in_fd == -1) {
+            printf("Problem opening file descriptor");
+            exit(1);
+          }
+          dup2(in_fd, 0);
+          close(in_fd);
         }
-        // The parent doesn't wait for the execution
+        // Check for output redirection
+        if (l->out) {
+          int out_fd = open(l->out, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+          if (out_fd == -1) {
+            printf("Problem opening file descriptor");
+            exit(1);
+          }
+          dup2(out_fd, 1);
+          close(out_fd);
+        }
+        if (num_cmd > 1){
+          //Use of pipes
+          if (fork() == 0){
+            //child
+            dup2(pipe_fd[i][0], 0); //associating stdin to read channel
+            close(pipe_fd[i][1]);
+            close(pipe_fd[i][0]);
+            execvp(cmd_right[0], cmd_right);
+            exit(1);
+          }
+          dup2(pipe_fd[i][1], 1);//associating stdout to write canal
+          close(pipe_fd[i][0]);
+          close(pipe_fd[i][1]);
+          execvp(cmd_left[0], cmd_left);
+          exit(1);
+        }
+        
         else {
-          printf("The child is to be ran in the backgrounds\n");
-          //Add process to background processes
-          struct process_node *bg_process = (struct process_node *)malloc(sizeof( struct process_node));
-          bg_process -> pid = pid;
-          bg_process -> cmd_name = strdup(cmd[0]);
-
-          if (process_list == NULL){
-            process_list = bg_process;
-            process_list -> next = NULL;
-          }
-          else{
-            bg_process -> next = process_list;
-            process_list  = bg_process;
-          }
+          //No pipes
+          execvp(cmd_left[0], cmd_left);
+          exit(1);
+        }
 
         }
-      }
+        //Parent
+        else {
+          // The parent process waits for the execution of the child
+          if (!l->bg) {
+            int status;
+            wait(&status);
+          }
+          // The parent doesn't wait for the execution
+          else {
+            printf("The child is to be ran in the backgrounds\n");
+            
+            //Add process to background processes
+            struct process_node *bg_process = (struct process_node *)malloc(sizeof( struct process_node));
+            bg_process -> pid = pid;
+            bg_process -> cmd_name = strdup(cmd_left[0]);
 
-    }
+            if (process_list == NULL){
+              process_list = bg_process;
+              process_list -> next = NULL;
+            }
+            else{
+              bg_process -> next = process_list;
+              process_list  = bg_process;
+            }
+          }
+        }
+      }
   }
+}
