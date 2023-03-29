@@ -75,10 +75,12 @@ void terminate(char *line) {
 
 
 void remove_child(int sig) {
-    //Handler to be associated with the SIGCHLD process
+    //Handler to be associated with the SIGCHLD process: removes the process from the list and prints int
+    //Variante: Terminaison asynchrone
     pid_t pid;
     int status;
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+
       struct process_node *currentNode = process_list;
       struct process_node *prevNode = NULL;
       while (currentNode != NULL) {
@@ -88,6 +90,9 @@ void remove_child(int sig) {
               } else {
                   prevNode->next = currentNode->next;
               }
+
+              printf("The process with pid %d and command name %s\n has terminated", currentNode->pid, currentNode->cmd_name);
+
               free(currentNode->cmd_name);
               free(currentNode);
               break;
